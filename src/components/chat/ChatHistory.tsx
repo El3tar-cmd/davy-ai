@@ -30,24 +30,42 @@ export function ChatHistory({
   activeAgent,
   onPromptSelect,
 }: ChatHistoryProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (shouldAutoScrollRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
+
+  const handleScroll = () => {
+    if (!scrollRef.current) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    
+    // If user at bottom (within 100px), keep auto-scrolling
+    const isAtBottom = scrollHeight - clientHeight <= scrollTop + 100;
+    shouldAutoScrollRef.current = isAtBottom;
+  };
 
   const visibleMessages = messages.filter((message) => message.role !== 'system');
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+    <div 
+      ref={scrollRef}
+      onScroll={handleScroll}
+      className="flex-1 overflow-y-auto p-4 space-y-4 scroll-smooth"
+    >
       {visibleMessages.length === 0 ? (
         <EmptyState onPromptSelect={onPromptSelect} />
       ) : (
         visibleMessages.map((message, index) => <ChatMessage key={index} message={message} />)
       )}
       {isGenerating && (
-        <div className="flex items-start">
-          <div className="bg-zinc-800 text-zinc-300 p-3 rounded-lg rounded-tl-none border border-zinc-700 text-sm flex items-center gap-2">
+        <div className="flex items-start animate-in fade-in slide-in-from-bottom-2">
+          <div className="bg-zinc-800 text-zinc-300 p-3 rounded-lg rounded-tl-none border border-zinc-700 text-sm flex items-center gap-2 shadow-lg">
             <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
             {getLoadingMessage(generationPhase, activeAgent)}
           </div>

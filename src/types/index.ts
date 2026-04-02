@@ -33,7 +33,7 @@ export type DatabaseProvider = 'supabase' | 'firebase';
 
 export type AppKind = 'frontend' | 'backend' | 'full-stack';
 export type ExecutionMode = 'single-agent' | 'multi-agent';
-export type WorkflowKind = 'build' | 'review' | 'fix' | 'inspect' | 'rebuild' | 'chat';
+export type WorkflowKind = 'build' | 'review' | 'fix' | 'inspect' | 'rebuild' | 'chat' | 'resume';
 export type GenerationPhase = 'idle' | 'routing' | 'planning' | 'building' | 'reviewing' | 'validating' | 'fixing' | 'completed' | 'failed' | 'chatting';
 export type GenerationAgent = 'lead' | 'planner' | 'builder' | 'reviewer' | 'fixer' | 'frontend' | 'backend' | 'database' | 'documentation' | 'assistant' | null;
 export type GateStatus = 'pass' | 'warn' | 'fail';

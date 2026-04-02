@@ -552,44 +552,54 @@ function inferRoutingDecision(input: string, existingFiles: Record<string, strin
   const wantsRebuild = /(from scratch|start over|rebuild|regenerate|rewrite everything|ابدأ من جديد|اعادة بناء|إعادة بناء)/i.test(input);
   const wantsInspectOnly = /(inspect only|review only|audit only|فحص فقط|راجع فقط|بدون تعديل|without changes?)/i.test(input);
   const wantsReview = /(افحص|فحص|راجع|مراجعة|دقق|audit|inspect|review|analy[sz]e|diagnos|quality check|code review)/i.test(input);
-  const wantsFix = /(اصلح|إصلح|اصلاح|إصلاح|تصليح|حل|لا يعمل|لا تعمل|مش شغال|مش شغالة|لا يشتغل|لا تشتغل|مش بيشتغل|does not work|doesn't work|not working|broken|fix|repair|resolve|debug|bug|errors?|issues?)/i.test(input);
+  const wantsFix = /(اصلح|إصلح|اصلاح|إصلاح|تصليح|حل|لا يعمل|لا تعمل|مش شغال|مش شغالة|لا يشتغل|لا تشتغل|مش بيشتغل|does not work|doesn't work|not working|broken|fix|repair|resolve|debug|bug|errors?|issues?|عيد|اعد|إعد|أعد|أصلح|صلح)/i.test(input);
+  const wantsResume = /(resume|continue|finish|keep going|complete|task\.?md|tasks?|كمل|استكمل|استمر|باقي|خلص|أكمل|اكمل)/i.test(input);
   const isQuestionOrResearch = /^[^a-zA-Z0-9\u0600-\u06FF]*(what|how|why|when|where|who|explain|tell me|search|research|ما|كيف|لماذا|متى|اين|من|اشرح|قل لي|ابحث|بحث|هل)/i.test(input.trim()) 
     && !/(build|create|make|generate|app|project|website|ابني|اصنع|انشئ|اعمل|تطبيق|مشروع)/i.test(input);
 
   let workflow: WorkflowKind = 'build';
+  const hasTasks = !!existingFiles['task.md'];
 
   if (wantsRebuild) {
     workflow = 'rebuild';
+  } else if (hasProject && wantsResume && hasTasks) {
+    workflow = 'resume';
   } else if (hasProject && wantsInspectOnly) {
     workflow = 'inspect';
   } else if (hasProject && wantsReview && !wantsFix) {
     workflow = 'review';
-  } else if (hasProject && wantsFix) {
+  } else if (hasProject && (wantsFix || (wantsResume && !hasTasks))) {
     workflow = 'fix';
   } else if (isQuestionOrResearch) {
     workflow = 'chat';
   }
 
-  if (!hasProject && (workflow === 'review' || workflow === 'inspect' || workflow === 'fix')) {
+  if (!hasProject && (workflow === 'review' || workflow === 'inspect' || workflow === 'fix' || workflow === 'resume')) {
     workflow = 'build';
   }
 
-  const needsPlanner = executionMode === 'multi-agent' && (workflow === 'build' || workflow === 'rebuild');
+  const needsPlanner = (executionMode === 'multi-agent' && (workflow === 'build' || workflow === 'rebuild'))
+    || (workflow === 'resume' && !hasTasks); // Fallback if task.md missing
+
   const targetAgent: GenerationAgent = workflow === 'build' || workflow === 'rebuild'
-    ? needsPlanner ? 'planner' : 'builder'
+    ? (needsPlanner ? 'planner' : 'builder')
     : workflow === 'chat'
       ? 'assistant'
-      : workflow === 'fix'
-        ? executionMode === 'multi-agent' ? 'reviewer' : 'builder'
-        : executionMode === 'multi-agent' ? 'reviewer' : null;
+      : workflow === 'resume'
+        ? 'builder'
+        : workflow === 'fix'
+          ? (executionMode === 'multi-agent' ? 'reviewer' : 'builder')
+          : (executionMode === 'multi-agent' ? 'reviewer' : null);
 
   const reason = workflow === 'build' || workflow === 'rebuild'
     ? hasProject && normalized.includes('rebuild') ? 'Existing project requires a rebuild workflow.' : 'Request is primarily asking for implementation work.'
-    : workflow === 'chat'
-      ? 'User is asking a general question or requesting research, not building an app.'
-      : workflow === 'fix'
-        ? 'Existing project files are present and the request is asking for targeted fixes.'
-        : 'Existing project files are present and the request is asking for inspection or review.';
+    : workflow === 'resume'
+      ? 'User wants to continue or resume from the existing task list.'
+      : workflow === 'chat'
+        ? 'User is asking a general question or requesting research, not building an app.'
+        : workflow === 'fix'
+          ? 'Existing project files are present and the request is asking for targeted fixes.'
+          : 'Existing project files are present and the request is asking for inspection or review.';
 
   return {
     workflow,
@@ -807,6 +817,23 @@ async function streamSingleAgent(params: {
   }
 
   return { text: rawText, files: latestFiles, cleanText: latestCleanText, diagnostics: latestDiagnostics };
+}
+
+function sanitizeAgentOutput(text: string): string {
+  if (!text) return '';
+  
+  return text
+    // Strip "Generated Files:" and the following list until some code tag or empty line
+    .replace(/^Generated Files:\s*(\n\s*[-*]\s*.*)*/gim, '')
+    // Strip "Executing: Task \d+:"
+    .replace(/Executing: Task \d+:[^\n]*/gi, '')
+    // Strip "[Frontend Agent]", "[Reviewer Agent]", etc.
+    .replace(/\[(Lead|Planner|Builder|Reviewer|Fixer|Frontend|Backend|Quality)\s*Agent\]/gi, '')
+    // Strip "Reviewer report:" followed by JSON
+    .replace(/Reviewer report:\s*\{[\s\S]*?\}/gi, '')
+    // Strip standalone ellipses often used as placeholders
+    .replace(/^\.\.\.\s*$/gm, '')
+    .trim();
 }
 
 export async function generateProjectWithOrchestration({
@@ -1103,7 +1130,7 @@ ${getMultiAgentUserContext(currentFiles)}`,
             onFilesUpdate(currentFiles);
             chatMessages[executionIndex] = {
               role: 'assistant',
-              content: cleanText,
+              content: sanitizeAgentOutput(cleanText),
               filesGenerated: getChangedFiles(baselineFiles, generatedFiles),
             };
             onMessagesUpdate([...chatMessages]);
@@ -1168,7 +1195,7 @@ ${getMultiAgentUserContext(currentFiles)}`,
           onFilesUpdate(currentFiles);
           chatMessages[builderIndex] = {
             role: 'assistant',
-            content: cleanText,
+            content: sanitizeAgentOutput(cleanText),
             filesGenerated: getChangedFiles(baselineFiles, generatedFiles),
           };
           onMessagesUpdate([...chatMessages]);
@@ -1390,7 +1417,7 @@ Apply the smallest concrete repair set needed for the failing scope. If blocker 
           onFilesUpdate(currentFiles);
           chatMessages[builderIndex] = {
             role: 'assistant',
-            content: cleanText,
+            content: sanitizeAgentOutput(cleanText),
             filesGenerated: getChangedFiles(builderBaselineFiles, currentFiles),
           };
           onMessagesUpdate([...chatMessages]);
@@ -1442,9 +1469,72 @@ Apply the smallest concrete repair set needed for the failing scope. If blocker 
     return finalizeResult(gateResults, reviewerSummary, attemptCount);
   };
 
+function getFilesToRedoFromInput(input: string): string[] {
+  const normalized = input.toLowerCase();
+  if (!/(redo|عيد|اعد|إعد|أعد|اعادة|إعادة|مرة ثانية|مرة اخري)/i.test(normalized)) return [];
+  
+  // Extract file extensions or names if mentioned
+  const files: string[] = [];
+  const matches = input.match(/[a-zA-Z0-9_\-\.\/]+\.(tsx|ts|css|html|js|json)/gi);
+  if (matches) files.push(...matches);
+  
+  return files;
+}
+
+function resetTasksForFiles(files: Record<string, string>, redoFiles: string[]): Record<string, string> {
+  const taskContent = files['task.md'];
+  if (!taskContent || redoFiles.length === 0) return files;
+  
+  let newContent = taskContent;
+  const lines = taskContent.split('\n');
+  
+  // For each file to redo, find the line in task.md and uncheck it
+  // and also uncheck its parent task
+  for (const file of redoFiles) {
+    const fileBasename = file.split('/').pop() || file;
+    let foundLineIndex = -1;
+    
+    for (let i = 0; i < lines.length; i++) {
+       if (lines[i].includes(`\`${file}\``) || lines[i].includes(`\`${fileBasename}\``)) {
+         if (lines[i].includes('- [x]')) {
+           lines[i] = lines[i].replace('- [x]', '- [ ]');
+           foundLineIndex = i;
+         }
+       }
+    }
+    
+    if (foundLineIndex !== -1) {
+      // Find the parent task (the nearest previous line starting with - [x] Task title)
+      for (let j = foundLineIndex - 1; j >= 0; j--) {
+        if (lines[j].trim().startsWith('- [x]') && !lines[j].includes('`')) {
+          lines[j] = lines[j].replace('- [x]', '- [ ]');
+          break;
+        }
+      }
+    }
+  }
+  
+  return { ...files, 'task.md': lines.join('\n') };
+}
+
   if (workflow === 'chat') {
     await runExecutionPass('chat');
     return finalizeResult([], '', 0);
+  }
+
+  if (workflow === 'resume') {
+    const redoFiles = getFilesToRedoFromInput(input);
+    if (redoFiles.length > 0) {
+      currentFiles = resetTasksForFiles(currentFiles, redoFiles);
+      onFilesUpdate(currentFiles);
+    }
+    
+    const builderResult = await runExecutionPass('build', currentFiles);
+    if (executionMode === 'single-agent') {
+      const gateResults = await runExecutionGates(currentFiles, buildSpec, executionMode, builderResult.diagnostics, 'builder', plannerUsed);
+      return finalizeResult(gateResults, '', 0);
+    }
+    return runReviewAndFixLoop(builderResult.diagnostics);
   }
 
   if (workflow === 'build' || workflow === 'rebuild') {
