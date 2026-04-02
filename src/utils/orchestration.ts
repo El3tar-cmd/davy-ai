@@ -1,6 +1,6 @@
 import { streamOllamaChat } from '../lib/ollama';
 import { parseFilesFromStream, type ParserDiagnostics } from './file-parser';
-import { SearchService } from '../services/SearchService';
+import { SearchService, type SearchResult } from '../services/SearchService';
 import { SYSTEM_PROMPT } from '../constants/system-prompt';
 import { buildSpecFromPrompt } from './project-classifier';
 import { getFailedGateSummary, summarizeGateResults } from './quality-gates';
@@ -553,6 +553,8 @@ function inferRoutingDecision(input: string, existingFiles: Record<string, strin
   const wantsInspectOnly = /(inspect only|review only|audit only|فحص فقط|راجع فقط|بدون تعديل|without changes?)/i.test(input);
   const wantsReview = /(افحص|فحص|راجع|مراجعة|دقق|audit|inspect|review|analy[sz]e|diagnos|quality check|code review)/i.test(input);
   const wantsFix = /(اصلح|إصلح|اصلاح|إصلاح|تصليح|حل|لا يعمل|لا تعمل|مش شغال|مش شغالة|لا يشتغل|لا تشتغل|مش بيشتغل|does not work|doesn't work|not working|broken|fix|repair|resolve|debug|bug|errors?|issues?)/i.test(input);
+  const isQuestionOrResearch = /^[^a-zA-Z0-9\u0600-\u06FF]*(what|how|why|when|where|who|explain|tell me|search|research|ما|كيف|لماذا|متى|اين|من|اشرح|قل لي|ابحث|بحث|هل)/i.test(input.trim()) 
+    && !/(build|create|make|generate|app|project|website|ابني|اصنع|انشئ|اعمل|تطبيق|مشروع)/i.test(input);
 
   let workflow: WorkflowKind = 'build';
 
@@ -564,6 +566,8 @@ function inferRoutingDecision(input: string, existingFiles: Record<string, strin
     workflow = 'review';
   } else if (hasProject && wantsFix) {
     workflow = 'fix';
+  } else if (isQuestionOrResearch) {
+    workflow = 'chat';
   }
 
   if (!hasProject && (workflow === 'review' || workflow === 'inspect' || workflow === 'fix')) {
@@ -573,15 +577,19 @@ function inferRoutingDecision(input: string, existingFiles: Record<string, strin
   const needsPlanner = executionMode === 'multi-agent' && (workflow === 'build' || workflow === 'rebuild');
   const targetAgent: GenerationAgent = workflow === 'build' || workflow === 'rebuild'
     ? needsPlanner ? 'planner' : 'builder'
-    : workflow === 'fix'
-      ? executionMode === 'multi-agent' ? 'reviewer' : 'builder'
-      : executionMode === 'multi-agent' ? 'reviewer' : null;
+    : workflow === 'chat'
+      ? 'assistant'
+      : workflow === 'fix'
+        ? executionMode === 'multi-agent' ? 'reviewer' : 'builder'
+        : executionMode === 'multi-agent' ? 'reviewer' : null;
 
   const reason = workflow === 'build' || workflow === 'rebuild'
     ? hasProject && normalized.includes('rebuild') ? 'Existing project requires a rebuild workflow.' : 'Request is primarily asking for implementation work.'
-    : workflow === 'fix'
-      ? 'Existing project files are present and the request is asking for targeted fixes.'
-      : 'Existing project files are present and the request is asking for inspection or review.';
+    : workflow === 'chat'
+      ? 'User is asking a general question or requesting research, not building an app.'
+      : workflow === 'fix'
+        ? 'Existing project files are present and the request is asking for targeted fixes.'
+        : 'Existing project files are present and the request is asking for inspection or review.';
 
   return {
     workflow,
@@ -593,7 +601,7 @@ function inferRoutingDecision(input: string, existingFiles: Record<string, strin
 }
 
 function normalizeRoutingDecision(candidate: Partial<RoutingDecision>, fallback: RoutingDecision, executionMode: ExecutionMode, existingFiles: Record<string, string>): RoutingDecision {
-  const allowedWorkflows: WorkflowKind[] = ['build', 'review', 'fix', 'inspect', 'rebuild'];
+  const allowedWorkflows: WorkflowKind[] = ['build', 'review', 'fix', 'inspect', 'rebuild', 'chat'];
   let workflow = allowedWorkflows.includes(candidate.workflow as WorkflowKind) ? candidate.workflow as WorkflowKind : fallback.workflow;
   const hasProject = hasExistingProjectFiles(existingFiles);
 
@@ -609,9 +617,11 @@ function normalizeRoutingDecision(candidate: Partial<RoutingDecision>, fallback:
   const needsPlanner = executionMode === 'multi-agent' && (candidate.needsPlanner ?? fallback.needsPlanner) && (workflow === 'build' || workflow === 'rebuild');
   const targetAgent = workflow === 'build' || workflow === 'rebuild'
     ? needsPlanner ? 'planner' : 'builder'
-    : workflow === 'fix'
-      ? executionMode === 'multi-agent' ? 'reviewer' : 'builder'
-      : executionMode === 'multi-agent' ? 'reviewer' : null;
+    : workflow === 'chat'
+      ? 'assistant'
+      : workflow === 'fix'
+        ? executionMode === 'multi-agent' ? 'reviewer' : 'builder'
+        : executionMode === 'multi-agent' ? 'reviewer' : null;
 
   return {
     workflow,
@@ -640,15 +650,16 @@ async function routeRequestWithLeadAgent(params: {
         model: params.selectedModel,
         prompt: `You are the Lead Agent for an app-building workflow. Decide the workflow for the request. Output JSON only with keys workflow, needsPlanner, targetAgent, shouldPreserveFiles, reason.
 
-Allowed workflow values: build, review, fix, inspect, rebuild.
-Allowed targetAgent values: planner, builder, reviewer, lead, null.
+Allowed workflow values: build, review, fix, inspect, rebuild, chat.
+Allowed targetAgent values: planner, builder, reviewer, assistant, lead, null.
 
 Rules:
 1. If the user asks to build a new feature or app, choose 'build'.
 2. If the user asks to fix a bug or error, choose 'fix'. Target agent should be 'builder'.
 3. If the user asks to review or inspect existing code, choose 'review' or 'inspect'. Target agent should be 'reviewer'.
 4. If the user asks to start over, choose 'rebuild'.
-5. Only use 'planner' as targetAgent if execution mode is 'multi-agent' and workflow is 'build' or 'rebuild'. Otherwise, use 'builder' for 'build'/'fix' and 'reviewer' for 'review'/'inspect'.
+5. If the user asks a general question, wants an explanation, or requests research WITHOUT asking to build a new app, choose 'chat'. Target agent should be 'assistant'.
+6. Only use 'planner' as targetAgent if execution mode is 'multi-agent' and workflow is 'build' or 'rebuild'. Otherwise, use 'builder' for 'build'/'fix' and 'reviewer' for 'review'/'inspect'.
 
 Execution mode: ${params.executionMode}
 User request:
@@ -681,43 +692,54 @@ ${Object.keys(params.currentFiles).sort().slice(0, 200).join('\n') || '(none)'}`
   }
 }
 
-async function runSearchIfNeeded(endpoint: string, selectedModel: string, input: string, enabled: boolean) {
-  if (!enabled) return '';
+/** Extract meaningful search keywords from user input without an LLM call. */
+function extractSearchKeywords(input: string): string {
+  return input
+    .replace(/--- FILE:[\s\S]*?--- END FILE ---/g, ' ')
+    .replace(/<file[\s\S]*?<\/file>/g, ' ')
+    .replace(/<edit[\s\S]*?<\/edit>/g, ' ')
+    .replace(/\b(what|how|why|when|where|who|explain|tell me|search|research|ما|كيف|لماذا|متى|اين|من|اشرح|قل لي|ابحث|عن|بحث|هل|please|can you|i want|i need|make me|create|build|generate|اعمل|عايز|محتاج|ممكن)\b/gi, ' ')
+    .replace(/["']/g, '') // Remove quotes to avoid exact string matching which yields 0 results
+    .replace(/[<>{}[\]`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 200);
+}
 
-  let optimizedQuery = input;
+async function runSearchIfNeeded(
+  _endpoint: string,
+  _selectedModel: string,
+  input: string,
+  enabled: boolean,
+  onStatus?: (msg: string) => void,
+): Promise<{ text: string; results: SearchResult[]; query: string; provider: string }> {
+  const empty = { text: '', results: [], query: '', provider: '' };
+  if (!enabled) return empty;
+
+  const query = extractSearchKeywords(input);
+  if (!query || query.length < 3) return empty;
+
+  onStatus?.(`Searching for "${query}"...`);
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-    const response = await fetch(`${endpoint.replace(/\/$/, '')}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: selectedModel,
-        prompt: `Convert the following user request into a concise web search query. Output only the query.\n\n${input}`,
-        stream: false,
-        options: { temperature: 0.1, num_predict: 50 },
-      }),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (response.ok) {
-      const data = await response.json();
-      if (typeof data.response === 'string' && data.response.trim().length > 2) {
-        optimizedQuery = data.response.trim().replace(/^["']|["']$/g, '');
-      }
+    const outcome = await SearchService.searchDetailed(query);
+    if (outcome.ok && outcome.results.length > 0) {
+      onStatus?.(`Search complete (${outcome.results.length} results via ${outcome.provider})`);
+      const formatted = [
+        `[Web Search: "${query}" — ${outcome.results.length} results via ${outcome.provider}${outcome.cached ? ' (cached)' : ''}]`,
+        ...outcome.results.map((r, i) => `${i + 1}. ${r.title} | ${r.source}\n   ${r.url}\n   ${r.snippet}`),
+        '[End Search]'
+      ].join('\n');
+      
+      return { text: formatted, results: outcome.results, query, provider: outcome.provider };
+    } else {
+      onStatus?.('No search results found');
     }
-  } catch (_error) {
-    // Keep original input when optimization fails.
-  }
-
-  try {
-    return await SearchService.searchWeb(optimizedQuery);
-  } catch (_error) {
-    return '\n--- WEB SEARCH ERROR ---\nCould not retrieve live data. Proceeding with internal knowledge.\n';
+    return { text: `[Web Search: "${query}" — no results available]`, results: [], query, provider: 'none' };
+  } catch (err) {
+    console.warn('[Search] Search failed:', err);
+    onStatus?.('Search unavailable');
+    return empty;
   }
 }
 
@@ -807,10 +829,18 @@ export async function generateProjectWithOrchestration({
   if (isWebSearchEnabled) {
     onStatusUpdate({ phase: 'routing', agent: 'lead', searching: true });
   }
-  const searchContext = await runSearchIfNeeded(endpoint, selectedModel, input, isWebSearchEnabled);
 
-  let routingDecision;
-  if (executionMode === 'multi-agent') {
+  const searchOutcome = await runSearchIfNeeded(
+    endpoint,
+    selectedModel,
+    input,
+    isWebSearchEnabled,
+    (msg: string) => onStatusUpdate({ phase: 'routing', agent: 'lead', searching: msg })
+  );
+  const searchContext = searchOutcome.text;
+
+  let routingDecision = inferRoutingDecision(input, currentFiles, executionMode);
+  if (executionMode === 'multi-agent' && routingDecision.workflow !== 'chat') {
     onStatusUpdate({ phase: 'routing', agent: 'lead', searching: 'Lead Agent is selecting the right workflow...' });
     routingDecision = await routeRequestWithLeadAgent({
       endpoint,
@@ -820,8 +850,6 @@ export async function generateProjectWithOrchestration({
       executionMode,
       signal,
     });
-  } else {
-    routingDecision = inferRoutingDecision(input, currentFiles, executionMode);
   }
 
   const workflow = routingDecision.workflow;
@@ -836,15 +864,28 @@ export async function generateProjectWithOrchestration({
     editResults: [],
   };
 
-  const addSearchContext = (messages: OllamaMessage[]) => (
-    searchContext
-      ? [...messages, { role: 'user' as const, content: `Supplemental research context:
-${searchContext}` }]
-      : messages
-  );
+  const addSearchContext = (messages: OllamaMessage[]) => {
+    if (!searchContext) return messages;
+
+    // Inject search context right after the first system message if one exists,
+    // otherwise add it as a new system message at the beginning.
+    const systemIndex = messages.findIndex(m => m.role === 'system');
+    const researchMessage: OllamaMessage = {
+      role: 'system',
+      content: `[Web Research Results]\n${searchContext}\n[End Research]`
+    };
+
+    if (systemIndex >= 0) {
+      const newMessages = [...messages];
+      newMessages.splice(systemIndex + 1, 0, researchMessage);
+      return newMessages;
+    }
+    
+    return [researchMessage, ...messages];
+  };
 
   const runPlannerPhase = async () => {
-    onStatusUpdate({ phase: 'planning', agent: 'planner', searching: 'Planner Agent is drafting implementation artifacts...' });
+    onStatusUpdate({ phase: 'planning', agent: 'planner', searching: false });
 
     const plannerMessages = addSearchContext([
       {
@@ -945,6 +986,64 @@ Every single implementation file listed in structure.md MUST appear under exactl
       overwrittenExistingFiles: [],
       editResults: [],
     };
+
+    if (builderWorkflow === 'chat') {
+      onStatusUpdate({
+        phase: 'chatting',
+        agent: 'assistant',
+        searching: searchOutcome.results.length > 0 
+          ? `Found ${searchOutcome.results.length} sources...` 
+          : 'Synthesizing response...',
+      });
+
+      // 1. If we have search results, inject a "Research Summary" message FIRST
+      if (searchOutcome.results.length > 0) {
+        const researchSummary = `🔍 **Researching:** "${searchOutcome.query}"\n\nI've gathered the latest information from **${searchOutcome.provider}**. Here are the primary sources I'm using for this answer:\n\n` +
+          searchOutcome.results.map(r => `*   **${r.title}**\n    [${r.url}](${r.url})`).join('\n') +
+          `\n\n---\n\n*Synthesizing the results to answer your question...*`;
+
+        chatMessages = [...chatMessages, { role: 'assistant', content: researchSummary }];
+        onMessagesUpdate(chatMessages);
+      }
+
+      const hasResearch = !!searchContext;
+      const researchPrompt = hasResearch 
+        ? `You are a helpful AI coding assistant and researcher. You have just been provided with up-to-date web research results in the system message. \nCRITICAL RULES:\n1. Open your response by acknowledging that you are synthesizing the research results found above.\n2. Answer the user's question accurately using ONLY the provided research if it is relevant. Do not rely solely on your generic training data.\n3. Make your answer structured, professional, and detailed.\n4. DO NOT attempt to write or create an application framework, DO NOT output any <file> or <edit> tags.`
+        : `You are a helpful AI coding assistant and researcher. Answer the user's question, summarize your findings, or explain concepts. \nCRITICAL: DO NOT attempt to write or create an application framework, DO NOT output any <file> or <edit> tags, and DO NOT generate React components unless the user EXPLICITLY asks for a code snippet.`;
+
+      const chatResultMessages = addSearchContext([
+        { role: 'system' as const, content: `${SYSTEM_PROMPT}\n\n${researchPrompt}` },
+        ...chatMessages.filter((message) => message.role !== 'system')
+      ]);
+
+      const chatIndex = chatMessages.length;
+      chatMessages = [...chatMessages, { role: 'assistant', content: '' }];
+      onMessagesUpdate(chatMessages);
+
+      const chatResult = await streamSingleAgent({
+        endpoint,
+        model: selectedModel,
+        messages: chatResultMessages,
+        signal,
+        baselineFiles: currentFiles,
+        onPartialText: (_rawText, _generatedFiles, cleanText) => {
+          chatMessages[chatIndex] = {
+            role: 'assistant',
+            content: cleanText,
+            filesGenerated: [],
+          };
+          onMessagesUpdate([...chatMessages]);
+        },
+      });
+
+      onStatusUpdate({
+        phase: 'completed',
+        agent: 'assistant',
+        searching: false,
+      });
+
+      return { files: currentFiles, diagnostics: finalDiagnostics };
+    }
 
     if (plannerUsed) {
       const taskContent = currentFiles['task.md'] || '';
@@ -1342,6 +1441,11 @@ Apply the smallest concrete repair set needed for the failing scope. If blocker 
 
     return finalizeResult(gateResults, reviewerSummary, attemptCount);
   };
+
+  if (workflow === 'chat') {
+    await runExecutionPass('chat');
+    return finalizeResult([], '', 0);
+  }
 
   if (workflow === 'build' || workflow === 'rebuild') {
     const builderResult = await runExecutionPass(workflow, currentFiles);

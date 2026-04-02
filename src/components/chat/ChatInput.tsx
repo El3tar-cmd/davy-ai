@@ -285,7 +285,7 @@ export function ChatInput({
             }`}
             title={isWebSearchEnabled ? 'Web Search Enabled' : 'Enable Web Search'}
           >
-            <Globe className={`w-4 h-4 ${isWebSearchEnabled && isSearching === true ? 'animate-spin text-indigo-500' : ''}`} />
+            <Globe className={`w-4 h-4 ${isWebSearchEnabled && !!isSearching ? 'animate-spin text-indigo-500' : ''}`} />
           </button>
           {onToggleMultiAgent && (
             <button
@@ -353,10 +353,12 @@ export function ChatInput({
               {getPhaseLabel(generationPhase, activeAgent)}
             </span>
             {isSearching && (
-              <span className="inline-flex items-center gap-1 text-indigo-400">
-                {typeof isSearching === 'boolean' ? <Globe className="w-3 h-3 animate-spin" /> : <Loader2 className="w-3 h-3 animate-spin" />}
-                {typeof isSearching === 'string' ? isSearching : 'Researching...'}
-              </span>
+              <div className="inline-flex items-center gap-2 bg-indigo-500/10 border border-indigo-500/20 px-2 py-1 rounded-md text-indigo-400 animate-pulse shadow-[0_0_10px_rgba(99,102,241,0.1)]">
+                {typeof isSearching === 'boolean' ? <Globe className="w-3.5 h-3.5 animate-spin" /> : <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                <span className="font-medium whitespace-nowrap overflow-hidden text-ellipsis max-w-[200px]">
+                  {typeof isSearching === 'string' ? isSearching : 'Researching...'}
+                </span>
+              </div>
             )}
           </div>
           <div className="text-zinc-500">Powered by Ollama ({selectedModel || 'No model selected'})</div>

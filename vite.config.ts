@@ -58,6 +58,23 @@ export default defineConfig(() => {
         'Cross-Origin-Opener-Policy': 'same-origin',
       },
       hmr: process.env.DISABLE_HMR !== 'true',
+      proxy: {
+        '/api/search-proxy': {
+          target: 'https://html.duckduckgo.com',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api\/search-proxy/, ''),
+          configure: (proxy, _options) => {
+            proxy.on('proxyReq', (proxyReq, req, _res) => {
+              const target = req.headers['x-search-target'] as string;
+              if (target) {
+                const url = new URL(target);
+                proxyReq.path = url.pathname + url.search;
+                proxyReq.setHeader('Host', url.host);
+              }
+            });
+          },
+        },
+      },
     },
   };
 });

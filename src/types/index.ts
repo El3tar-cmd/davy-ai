@@ -33,9 +33,9 @@ export type DatabaseProvider = 'supabase' | 'firebase';
 
 export type AppKind = 'frontend' | 'backend' | 'full-stack';
 export type ExecutionMode = 'single-agent' | 'multi-agent';
-export type WorkflowKind = 'build' | 'review' | 'fix' | 'inspect' | 'rebuild';
-export type GenerationPhase = 'idle' | 'routing' | 'planning' | 'building' | 'reviewing' | 'validating' | 'fixing' | 'completed' | 'failed';
-export type GenerationAgent = 'lead' | 'planner' | 'builder' | 'reviewer' | 'fixer' | 'frontend' | 'backend' | 'database' | 'documentation' | null;
+export type WorkflowKind = 'build' | 'review' | 'fix' | 'inspect' | 'rebuild' | 'chat';
+export type GenerationPhase = 'idle' | 'routing' | 'planning' | 'building' | 'reviewing' | 'validating' | 'fixing' | 'completed' | 'failed' | 'chatting';
+export type GenerationAgent = 'lead' | 'planner' | 'builder' | 'reviewer' | 'fixer' | 'frontend' | 'backend' | 'database' | 'documentation' | 'assistant' | null;
 export type GateStatus = 'pass' | 'warn' | 'fail';
 export type GatePriority = 'blocker' | 'compliance' | 'quality';
 export type ManifestRole = 'frontend' | 'backend' | 'unknown';

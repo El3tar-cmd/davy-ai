@@ -238,7 +238,7 @@ export function CodeView({
   return (
     <div className="w-full h-full flex bg-[#1e1e1e] rounded-lg border border-zinc-800 overflow-hidden">
       <PanelGroup orientation="horizontal">
-        <Panel defaultSize={20} minSize={15} maxSize={40}>
+        <Panel defaultSize="20%" minSize="15%" maxSize="40%">
           <FileExplorer
             files={files}
             selectedFile={selectedFile}
@@ -252,16 +252,16 @@ export function CodeView({
 
         <PanelResizeHandle className="w-1 bg-[#252526] hover:bg-indigo-500 transition-colors cursor-col-resize" />
 
-        <Panel defaultSize={80} minSize={30}>
+        <Panel defaultSize="80%" minSize="30%">
           <PanelGroup orientation="vertical">
-            <Panel defaultSize={isActive && isTerminalVisible && terminalRef ? 70 : 100} minSize={20}>
+            <Panel defaultSize={isActive && isTerminalVisible && terminalRef ? "70%" : "100%"} minSize="20%">
               {editorPanel}
             </Panel>
 
             {isActive && isTerminalVisible && terminalRef && (
               <>
                 <PanelResizeHandle className="h-1 bg-[#252526] hover:bg-indigo-500 transition-colors cursor-row-resize" />
-                <Panel defaultSize={30} minSize={10}>
+                <Panel defaultSize="30%" minSize="10%">
                   <div className="h-full bg-black flex flex-col">
                     <div className="flex items-center justify-between px-4 py-1.5 bg-[#1e1e1e] border-b border-[#3c3c3c]">
                       <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 flex items-center gap-2">

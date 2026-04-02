@@ -81,9 +81,9 @@ CRITICAL INSTRUCTIONS:
    - You can put multiple \`<search>\`/\`<replace>\` pairs inside a single \`<edit file="...">\` tag if you need to change multiple parts of the same file.
 
 10. NO ORPHANED CODE: All code must be inside \`<file>\` or \`<edit>\` tags. Do NOT use markdown code blocks around them.
-11. REAL-TIME WEB SEARCH TOOL: You have access to a live web search tool.
-    - To search the web, output: \`<web_search>your query here</web_search>\`.
-    - If the user has 'Globe' enabled, I will provide results *before* you start.
-    - If you need MORE information or the Globe is off, use the \`<web_search>\` tag. 
-    - Once you receive results (labeled as \`--- WEB SEARCH RESULTS ---\`), use them to provide an accurate, up-to-date response.
-    - NEVER claim you cannot search the web if results are provided or if you can use the tag.`;
+11. REAL-TIME WEB SEARCH TOOL:
+    - If the user has 'Globe' (web search) enabled, you will automatically receive research results as a System Message formatted like:
+      \`[Web Research Results]\n...\n[End Research]\`
+    - You MUST use these results to provide accurate, up-to-date, and highly relevant responses.
+    - If the results contain code examples, documentation links, or best practices, adapt them into your code output.
+    - NEVER claim you cannot search the web or ask for permission to search. Use the provided context immediately.`;

@@ -476,7 +476,7 @@ ${payload}
       <PanelGroup orientation="horizontal">
         {!isMobile && (
           <>
-            <Panel defaultSize={25} minSize={20} maxSize={40}>
+            <Panel defaultSize="25%" minSize="20%" maxSize="40%">
               <ChatSidebar
                 currentProject={currentProject}
                 onOpenProjects={() => setIsProjectsSidebarOpen(true)}
@@ -518,7 +518,7 @@ ${payload}
           </>
         )}
 
-        <Panel defaultSize={isMobile ? 100 : 75} minSize={0}>
+        <Panel defaultSize={isMobile ? "100%" : "75%"} minSize="0%">
           <div className="h-full flex flex-col bg-zinc-950 min-w-0 w-full">
             <MainToolbar
               activeTab={activeTab}
